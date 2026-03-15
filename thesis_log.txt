@@ -1,0 +1,1179 @@
+--------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\Administrator\Downloads\thesis_log.txt
+  log type:  text
+ opened on:  14 Mar 2026, 05:31:11
+
+. 
+. /*-----------------------------------------------------------
+>   第一步：数据导入与基础整理
+> -----------------------------------------------------------*/
+. 
+. import delimited "panel_with_broad_tax.csv", encoding(UTF-8) clear
+(33 vars, 620 obs)
+
+. 
+. * 生成核心变量
+. gen pub_emp_share2 = emp_urban_unit_10k / (emp_urban_unit_10k + private_emp_10
+> k)
+(248 missing values generated)
+
+. label var pub_emp_share2   "公共部门就业占比（代理）"
+
+. label var broad_tax_burden "广义税负（政府支出/GDP，%）"
+
+. 
+. * 生成对数变量
+. gen ln_pub_emp  = ln(pub_emp_share2)
+(248 missing values generated)
+
+. gen ln_aging    = ln(aging_rate)
+
+. gen ln_urban    = ln(urban_rate)
+
+. gen ln_trade    = ln(trade_openness) if trade_openness > 0
+(62 missing values generated)
+
+. gen ln_broad_tx = ln(broad_tax_burden)
+(31 missing values generated)
+
+. 
+. * 劳动投入：城镇单位+私营个体就业（万人）
+. gen labor = emp_urban_unit_10k + private_emp_10k
+(248 missing values generated)
+
+. label var labor "劳动投入（城镇单位+私营个体，万人）"
+
+. gen ln_labor = ln(labor)
+(248 missing values generated)
+
+. 
+. * 设定面板结构
+. xtset province_id year
+
+Panel variable: province_id (strongly balanced)
+ Time variable: year, 2005 to 2024
+         Delta: 1 unit
+
+. 
+. /*-----------------------------------------------------------
+>   第二步：永续盘存法估算省级资本存量
+>   方法：K_t = (1-δ)*K_{t-1} + I_t
+>   参数：δ=0.096（折旧率，参考张军等2004）
+>         α=0.5（资本产出弹性，参考中国文献惯例）
+>   初始资本存量：K_2007 = I_2008 / (g + δ)
+>         g=0.161（2008-2017年固定资产投资平均增速）
+>   注：fai_bn单位为亿元，gdp_bn单位为亿元，保持一致
+> -----------------------------------------------------------*/
+. 
+. * 折旧率和资本弹性
+. scalar delta = 0.096
+
+. scalar alpha = 0.5
+
+. scalar g_inv = 0.161
+
+. 
+. * 初始资本存量（2007年）= 2008年投资 / (平均增速 + 折旧率)
+. * 按省份生成初始值
+. gen capital = .
+(620 missing values generated)
+
+. label var capital "省级资本存量（永续盘存法，亿元）"
+
+. 
+. * 设定2007年初始资本存量
+. bysort province_id (year): replace capital = fai_bn[2] / (g_inv + delta) ///
+>     if year == 2007
+(31 real changes made)
+
+. * 注：fai_bn[2]是2008年的值（数据从2005年开始，2007年行是第3行，但fai从2008起
+> 有数）
+. * 更稳健的写法：
+. drop capital
+
+. gen capital = .
+(620 missing values generated)
+
+. 
+. * 用2008年投资初始化2007年资本存量
+. levelsof province_id, local(provinces)
+1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30
+>  31
+
+. foreach p of local provinces {
+  2.     quietly sum fai_bn if province_id == `p' & year == 2008
+  3.     local I2008 = r(mean)
+  4.     quietly replace capital = `I2008' / (g_inv + delta) ///
+>         if province_id == `p' & year == 2007
+  5. }
+
+. 
+. * 永续盘存递推：2008年起
+. sort province_id year
+
+. foreach y of numlist 2008/2017 {
+  2.     replace capital = (1 - delta) * L.capital + fai_bn ///
+>         if year == `y' & fai_bn != .
+  3. }
+(31 real changes made)
+(31 real changes made)
+(31 real changes made)
+(31 real changes made)
+(31 real changes made)
+(31 real changes made)
+(31 real changes made)
+(31 real changes made)
+(31 real changes made)
+(31 real changes made)
+
+. 
+. * 检查资本存量
+. sum capital if year >= 2008 & year <= 2017
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+     capital |        310    58732.81    49601.04   1400.021   280412.5
+
+. gen ln_capital = ln(capital)
+(279 missing values generated)
+
+. label var ln_capital "ln(资本存量)"
+
+. 
+. /*-----------------------------------------------------------
+>   第三步：索洛残差法估算TFP
+>   ln(TFP) = ln(GDP) - α*ln(K) - (1-α)*ln(L)
+>   α = 0.5（资本产出弹性）
+> -----------------------------------------------------------*/
+. 
+. gen ln_gdp_val = ln(gdp_bn)
+(31 missing values generated)
+
+. 
+. gen ln_tfp = ln_gdp_val - alpha * ln_capital - (1 - alpha) * ln_labor
+(310 missing values generated)
+
+. label var ln_tfp "ln(TFP)：索洛残差（α=0.5）"
+
+. 
+. * 稳健性备用：α=0.4
+. gen ln_tfp_alt = ln_gdp_val - 0.4 * ln_capital - 0.6 * ln_labor
+(310 missing values generated)
+
+. label var ln_tfp_alt "ln(TFP)：索洛残差（α=0.4，稳健性）"
+
+. 
+. * 限定主回归样本
+. gen sample_main = (year >= 2008 & year <= 2017) & capital != . & ln_tfp != .
+
+. 
+. /*-----------------------------------------------------------
+>   第四步：描述性统计
+> -----------------------------------------------------------*/
+. 
+. estpost summarize ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>     ln_patent_apps urban_rate sec_ind_share trade_openness ///
+>     ln_capital ln_labor ///
+>     if sample_main == 1, detail
+
+             |  e(count)   e(sum_w)    e(mean)     e(Var)      e(sd)  e(skewn~) 
+-------------+------------------------------------------------------------------
+      ln_tfp |       310        310   .7300963   .0447405   .2115196   .4023735 
+pub_emp_sh~2 |       310        310   .4386496   .0072538   .0851694   .2430866 
+broad_tax_~n |       310        310   27.64831   395.6547   19.89107   3.360119 
+  aging_rate |       310        310   9.522862    3.92404   1.980919   .2256725 
+ln_patent_~s |       310        310   8.871764   2.871591   1.694577  -.5187064 
+  urban_rate |       310        310   54.12232   199.1614   14.11246   .6397343 
+sec_ind_sh~e |       310        310   45.99042   71.38454   8.448937   -1.18438 
+trade_open~s |       279        279   29.63377   1111.397   33.33762   1.878112 
+  ln_capital |       310        310   10.58408   1.010298   1.005136  -.8055153 
+    ln_labor |       310        310   6.770456   .8470294    .920342  -.7768375 
+
+             | e(kurto~)     e(sum)     e(min)     e(max)      e(p1)      e(p5) 
+-------------+------------------------------------------------------------------
+      ln_tfp |  3.143078   226.3299   .2166822   1.281164   .3000975   .3984358 
+pub_emp_sh~2 |  2.630079   135.9814    .249513   .6650685    .271201   .3043042 
+broad_tax_~n |   15.8033   8570.976   9.849381    132.619   10.24585   11.89839 
+  aging_rate |  2.683808   2952.087     4.8244    14.2795       5.23     6.6296 
+ln_patent_~s |  3.069727   2750.247   3.663562   12.13889   4.394449   5.590987 
+  urban_rate |  3.540179   16777.92       21.9       89.6      22.81         34 
+sec_ind_sh~e |  4.173711   14257.03      19.01       61.5       21.3       26.8 
+trade_open~s |  5.785739   8267.823      1.766   155.0786     3.9189     4.8255 
+  ln_capital |   3.62643   3281.065   7.244243   12.54402   7.731046   8.507879 
+    ln_labor |   3.57891   2098.841   3.907814   8.723018   4.238589    4.87321 
+
+             |    e(p10)     e(p25)     e(p50)     e(p75)     e(p90)     e(p95) 
+-------------+------------------------------------------------------------------
+      ln_tfp |  .4589518   .5987236    .712353   .8554449   .9951146    1.15569 
+pub_emp_sh~2 |  .3286339   .3771404   .4337021   .4942586    .559681   .5925302 
+broad_tax_~n |  13.03071   17.43566   22.71465   31.08896   39.80835   65.98865 
+  aging_rate |   7.00425     8.1472     9.3289    10.8436     12.196    12.9951 
+ln_patent_~s |  6.767333   7.873217   8.943512   10.14737   10.90567   11.44308 
+  urban_rate |     38.74      44.98      52.66       60.8      70.46      86.29 
+sec_ind_sh~e |     34.57      42.33       47.7         52      54.62      55.86 
+trade_open~s |    6.3543     8.6525    14.4043    36.2944    79.4018    110.343 
+  ln_capital |  9.208475   10.06765   10.72544   11.27472    11.7309   11.96777 
+    ln_labor |  5.286972   6.368359   6.901353    7.32975   7.816097    8.09534 
+
+             |    e(p99) 
+-------------+-----------
+      ln_tfp |   1.24889 
+pub_emp_sh~2 |  .6435105 
+broad_tax_~n |  124.1632 
+  aging_rate |   14.0835 
+ln_patent_~s |  11.95492 
+  urban_rate |      89.3 
+sec_ind_sh~e |      58.4 
+trade_open~s |  142.5266 
+  ln_capital |  12.39738 
+    ln_labor |  8.492628 
+
+. 
+. esttab using "desc_stats.rtf", replace ///
+>     cells("mean(fmt(3)) sd(fmt(3)) min(fmt(3)) max(fmt(3)) count(fmt(0))") ///
+>     title("表1 描述性统计（2008-2017年，N=310）") ///
+>     note("注：TFP采用索洛残差法估算，资本存量采用永续盘存法（δ=0.096，α=0.5）
+> 。广义税负为一般公共预算支出/GDP，遵循奥地利学派政府支出即税收口径。") ///
+>     nonumber nomtitle
+(output written to desc_stats.rtf)
+
+. 
+. * 相关系数矩阵
+. pwcorr ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>     ln_patent_apps if sample_main == 1, star(0.05)
+
+             |   ln_tfp pub_em~2 broad_~n aging_~e ln_pat~s
+-------------+---------------------------------------------
+      ln_tfp |   1.0000 
+pub_emp_sh~2 |   0.1927*  1.0000 
+broad_tax_~n |  -0.5271* -0.1463*  1.0000 
+  aging_rate |   0.1698* -0.2279* -0.4998*  1.0000 
+ln_patent_~s |   0.5231* -0.1878* -0.6669*  0.6672*  1.0000 
+
+. 
+. /*-----------------------------------------------------------
+>   第五步：主回归——双向固定效应
+>   因变量：ln_tfp（索洛残差TFP）
+>   H1：pub_emp_share2、broad_tax_burden、aging_rate
+>       与ln_tfp显著负相关
+>   注：不纳入ln_gdp作控制变量（TFP由GDP构造，会产生
+>       机械相关）；改用urban_rate、sec_ind_share、
+>       trade_openness作为控制变量
+> -----------------------------------------------------------*/
+. 
+. * 模型1：仅核心自变量
+. xtreg ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>     i.year if sample_main == 1, fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        310
+Group variable: province_id                     Number of groups  =         31
+
+R-squared:                                      Obs per group:
+     Within  = 0.6838                                         min =         10
+     Between = 0.2333                                         avg =       10.0
+     Overall = 0.2890                                         max =         10
+
+                                                F(12, 30)         =      21.41
+corr(u_i, Xb) = 0.0497                          Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .6136817   .1559302     3.94   0.000     .2952297    .9321336
+broad_tax_b~n |  -.0032373   .0020751    -1.56   0.129    -.0074752    .0010007
+   aging_rate |   .0069954   .0059026     1.19   0.245    -.0050594    .0190502
+              |
+         year |
+        2009  |  -.0113034   .0084667    -1.34   0.192    -.0285947    .0059879
+        2010  |   .0559831   .0133531     4.19   0.000     .0287124    .0832538
+        2011  |   .1032466   .0179958     5.74   0.000     .0664943    .1399988
+        2012  |    .089721   .0199502     4.50   0.000     .0489774    .1304647
+        2013  |    .036078   .0197806     1.82   0.078    -.0043192    .0764753
+        2014  |   .0101662   .0214508     0.47   0.639    -.0336422    .0539746
+        2015  |  -.0176427   .0239919    -0.74   0.468    -.0666407    .0313552
+        2016  |  -.0231295   .0256791    -0.90   0.375    -.0755732    .0293142
+        2017  |  -.0040682    .028502    -0.14   0.887    -.0622771    .0541406
+              |
+        _cons |   .4598883   .0940423     4.89   0.000     .2678284    .6519482
+--------------+----------------------------------------------------------------
+      sigma_u |  .17609684
+      sigma_e |  .04535892
+          rho |  .93778091   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store m1
+
+. 
+. * 模型2：加入控制变量
+. xtreg ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1, fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        279
+Group variable: province_id                     Number of groups  =         31
+
+R-squared:                                      Obs per group:
+     Within  = 0.7443                                         min =          9
+     Between = 0.1021                                         avg =        9.0
+     Overall = 0.0279                                         max =          9
+
+                                                F(14, 30)         =      22.87
+corr(u_i, Xb) = -0.7141                         Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .6935168   .1512559     4.59   0.000     .3846109    1.002423
+broad_tax_b~n |  -.0045048    .001332    -3.38   0.002     -.007225   -.0017846
+   aging_rate |    .010553   .0050393     2.09   0.045     .0002613    .0208447
+   urban_rate |  -.0114849   .0032742    -3.51   0.001    -.0181716   -.0047981
+sec_ind_share |   .0064083   .0019558     3.28   0.003      .002414    .0104026
+trade_openn~s |   .0000613   .0007146     0.09   0.932     -.001398    .0015207
+              |
+         year |
+        2009  |   .0171301   .0110908     1.54   0.133    -.0055203    .0397805
+        2010  |   .0972988   .0151337     6.43   0.000     .0663917    .1282059
+        2011  |   .1586637    .019327     8.21   0.000     .1191927    .1981347
+        2012  |   .1656289   .0237532     6.97   0.000     .1171184    .2141395
+        2013  |    .129027   .0263421     4.90   0.000     .0752292    .1828248
+        2014  |   .1307684   .0332756     3.93   0.000     .0628105    .1987263
+        2016  |   .1627442   .0517453     3.15   0.004     .0570663    .2684222
+        2017  |   .2014571   .0594816     3.39   0.002     .0799794    .3229348
+              |
+        _cons |   .6547313   .1455798     4.50   0.000     .3574176     .952045
+--------------+----------------------------------------------------------------
+      sigma_u |  .29589607
+      sigma_e |  .04066202
+          rho |  .98146577   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store m2
+
+. 
+. * 模型3：对数形式
+. xtreg ln_tfp ln_pub_emp broad_tax_burden ln_aging ///
+>     ln_urban sec_ind_share ln_trade ///
+>     i.year if sample_main == 1, fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        279
+Group variable: province_id                     Number of groups  =         31
+
+R-squared:                                      Obs per group:
+     Within  = 0.7108                                         min =          9
+     Between = 0.0045                                         avg =        9.0
+     Overall = 0.0106                                         max =          9
+
+                                                F(14, 30)         =      20.49
+corr(u_i, Xb) = -0.4225                         Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+   ln_pub_emp |    .281335   .0712899     3.95   0.000     .1357415    .4269284
+broad_tax_b~n |  -.0035746   .0015541    -2.30   0.029    -.0067486   -.0004006
+     ln_aging |   .0478815   .0535332     0.89   0.378    -.0614478    .1572108
+     ln_urban |  -.2970085   .1908688    -1.56   0.130    -.6868146    .0927976
+sec_ind_share |   .0067337   .0026883     2.50   0.018     .0012435    .0122239
+     ln_trade |   .0107747   .0170431     0.63   0.532    -.0240319    .0455814
+              |
+         year |
+        2009  |   .0117154   .0120155     0.98   0.337    -.0128235    .0362543
+        2010  |   .0747304   .0178953     4.18   0.000     .0381834    .1112774
+        2011  |   .1265245   .0232824     5.43   0.000     .0789754    .1740736
+        2012  |   .1270119   .0280933     4.52   0.000     .0696378     .184386
+        2013  |   .0859127   .0340386     2.52   0.017     .0163965    .1554289
+        2014  |   .0816799   .0421488     1.94   0.062    -.0043995    .1677594
+        2016  |   .1058781   .0618195     1.71   0.097    -.0203743    .2321304
+        2017  |   .1428138   .0704795     2.03   0.052    -.0011245    .2867521
+              |
+        _cons |    1.70949   .6267439     2.73   0.011     .4295081    2.989472
+--------------+----------------------------------------------------------------
+      sigma_u |  .23014531
+      sigma_e |  .04324109
+          rho |  .96590252   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store m3
+
+. 
+. * 模型4：剔除西藏（广义税负异常省份）
+. xtreg ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1 & province_id != 26, fe vce(cluster province_id
+> )
+
+Fixed-effects (within) regression               Number of obs     =        270
+Group variable: province_id                     Number of groups  =         30
+
+R-squared:                                      Obs per group:
+     Within  = 0.7503                                         min =          9
+     Between = 0.1346                                         avg =        9.0
+     Overall = 0.0351                                         max =          9
+
+                                                F(14, 29)         =      25.87
+corr(u_i, Xb) = -0.7099                         Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 30 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .6852013   .1553623     4.41   0.000     .3674498    1.002953
+broad_tax_b~n |  -.0062198   .0020611    -3.02   0.005    -.0104352   -.0020043
+   aging_rate |   .0121382   .0050529     2.40   0.023     .0018038    .0224726
+   urban_rate |  -.0105155   .0033246    -3.16   0.004     -.017315   -.0037159
+sec_ind_share |   .0056648   .0021684     2.61   0.014     .0012298    .0100997
+trade_openn~s |  -.0000983   .0007384    -0.13   0.895    -.0016086    .0014119
+              |
+         year |
+        2009  |   .0179542   .0123735     1.45   0.158    -.0073525    .0432609
+        2010  |   .1015994   .0156046     6.51   0.000     .0696844    .1335144
+        2011  |   .1632473    .020744     7.87   0.000      .120821    .2056737
+        2012  |   .1688432   .0256056     6.59   0.000     .1164738    .2212126
+        2013  |   .1299404   .0280881     4.63   0.000     .0724938     .187387
+        2014  |   .1271007   .0344402     3.69   0.001     .0566625    .1975389
+        2016  |   .1522427   .0526537     2.89   0.007     .0445537    .2599317
+        2017  |   .1893658   .0606613     3.12   0.004     .0652995    .3134321
+              |
+        _cons |     .67489   .1787511     3.78   0.001     .3093029    1.040477
+--------------+----------------------------------------------------------------
+      sigma_u |  .28532209
+      sigma_e |  .04058681
+          rho |  .98016652   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store m4
+
+. 
+. * 输出主回归结果
+. esttab m1 m2 m3 m4 using "main_regression.rtf", replace ///
+>     star(* 0.1 ** 0.05 *** 0.01) ///
+>     b(3) se(3) ///
+>     title("表2 双向固定效应主回归结果（因变量：ln_TFP）") ///
+>     mtitles("模型1" "模型2" "模型3（对数）" "模型4（剔除西藏）") ///
+>     note("括号内为聚类标准误（省份层面）。所有模型包含省份固定效应和年份固定效
+> 应。TFP为索洛残差法估算（α=0.5，δ=0.096）。广义税负为一般公共预算支出/GDP。")
+(output written to main_regression.rtf)
+
+. 
+. /*-----------------------------------------------------------
+>   第六步：中介效应检验
+>   H2：制度约束通过抑制创新（ln_patent_apps）损害TFP
+>   路径：pub_emp_share2 → ln_patent_apps → ln_tfp
+>         broad_tax_burden → ln_patent_apps → ln_tfp
+> -----------------------------------------------------------*/
+. 
+. * 第二步：自变量对中介变量
+. xtreg ln_patent_apps pub_emp_share2 broad_tax_burden aging_rate ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1, fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        279
+Group variable: province_id                     Number of groups  =         31
+
+R-squared:                                      Obs per group:
+     Within  = 0.9046                                         min =          9
+     Between = 0.5486                                         avg =        9.0
+     Overall = 0.6156                                         max =          9
+
+                                                F(14, 30)         =     146.44
+corr(u_i, Xb) = 0.0242                          Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+ln_patent_a~s | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .5615498   .6251891     0.90   0.376    -.7152566    1.838356
+broad_tax_b~n |   -.014189   .0079582    -1.78   0.085    -.0304418    .0020637
+   aging_rate |   .0090598   .0265828     0.34   0.736    -.0452296    .0633492
+   urban_rate |   .0632433   .0158216     4.00   0.000     .0309312    .0955554
+sec_ind_share |   .0253552   .0125715     2.02   0.053    -.0003193    .0510296
+trade_openn~s |   .0023873   .0035421     0.67   0.505    -.0048468    .0096213
+              |
+         year |
+        2009  |   .2883227   .0873666     3.30   0.002     .1098963    .4667491
+        2010  |   .3940318   .0870422     4.53   0.000      .216268    .5717955
+        2011  |   .6791591   .1140293     5.96   0.000     .4462802     .912038
+        2012  |    .926807   .1561436     5.94   0.000     .6079192    1.245695
+        2013  |   1.142071   .1918851     5.95   0.000     .7501898    1.533953
+        2014  |   1.292341   .2543924     5.08   0.000     .7728025     1.81188
+        2016  |   1.685571   .3968676     4.25   0.000     .8750594    2.496083
+        2017  |   1.641772   .4210405     3.90   0.001     .7818923    2.501651
+              |
+        _cons |   3.316364   .8573032     3.87   0.001     1.565517     5.06721
+--------------+----------------------------------------------------------------
+      sigma_u |   1.041817
+      sigma_e |   .2478527
+          rho |  .94643335   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store med_step2
+
+. 
+. * 第三步：自变量+中介变量同时对因变量
+. xtreg ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>     ln_patent_apps ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1, fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        279
+Group variable: province_id                     Number of groups  =         31
+
+R-squared:                                      Obs per group:
+     Within  = 0.7446                                         min =          9
+     Between = 0.0905                                         avg =        9.0
+     Overall = 0.0233                                         max =          9
+
+                                                F(15, 30)         =      24.55
+corr(u_i, Xb) = -0.7120                         Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .6901455   .1504965     4.59   0.000     .3827906    .9975004
+broad_tax_b~n |  -.0044196   .0013492    -3.28   0.003     -.007175   -.0016642
+   aging_rate |   .0104986   .0050344     2.09   0.046      .000217    .0207802
+ln_patent_a~s |   .0060035   .0149954     0.40   0.692    -.0246211    .0366281
+   urban_rate |  -.0118645   .0033664    -3.52   0.001    -.0187397   -.0049894
+sec_ind_share |   .0062561   .0019463     3.21   0.003     .0022812     .010231
+trade_openn~s |    .000047   .0007219     0.07   0.949    -.0014272    .0015212
+              |
+         year |
+        2009  |   .0153991   .0120048     1.28   0.209     -.009118    .0399162
+        2010  |   .0949332   .0150135     6.32   0.000     .0642715    .1255949
+        2011  |   .1545864   .0200116     7.72   0.000     .1137172    .1954556
+        2012  |   .1600648   .0259513     6.17   0.000     .1070652    .2130644
+        2013  |   .1221706   .0311859     3.92   0.000     .0584804    .1858607
+        2014  |   .1230098    .038436     3.20   0.003     .0445131    .2015065
+        2016  |   .1526249   .0586778     2.60   0.014     .0327888     .272461
+        2017  |   .1916007   .0651269     2.94   0.006     .0585938    .3246077
+              |
+        _cons |   .6348215   .1584417     4.01   0.000     .3112404    .9584025
+--------------+----------------------------------------------------------------
+      sigma_u |  .29572333
+      sigma_e |  .04072189
+          rho |  .98139084   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store med_step3
+
+. 
+. esttab med_step2 med_step3 using "mediation.rtf", replace ///
+>     star(* 0.1 ** 0.05 *** 0.01) b(3) se(3) ///
+>     title("表3 中介效应检验（广义税负口径，因变量：ln_TFP）") ///
+>     mtitles("第二步：→ln(专利申请)" "第三步：→ln(TFP)（含中介）")
+(output written to mediation.rtf)
+
+. 
+. * 间接效应
+. quietly xtreg ln_patent_apps pub_emp_share2 broad_tax_burden aging_rate ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1, fe
+
+. scalar a1 = _b[pub_emp_share2]
+
+. scalar a2 = _b[broad_tax_burden]
+
+. 
+. quietly xtreg ln_tfp ln_patent_apps pub_emp_share2 broad_tax_burden aging_rate
+>  ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1, fe
+
+. scalar b_med = _b[ln_patent_apps]
+
+. 
+. di "pub_emp_share2 间接效应（a×b）= " a1 * b_med
+pub_emp_share2 间接效应（a×b）= .00337127
+
+. di "broad_tax_burden 间接效应（a×b）= " a2 * b_med
+broad_tax_burden 间接效应（a×b）= -.00008518
+
+. 
+. /*-----------------------------------------------------------
+>   第七步：工具变量回归（处理内生性）
+>   工具变量：滞后一期的pub_emp_share2和broad_tax_burden
+> -----------------------------------------------------------*/
+. 
+. xtset province_id year
+
+Panel variable: province_id (strongly balanced)
+ Time variable: year, 2005 to 2024
+         Delta: 1 unit
+
+. gen iv_pub_emp   = L.pub_emp_share2
+(248 missing values generated)
+
+. gen iv_broad_tax = L.broad_tax_burden
+(62 missing values generated)
+
+. label var iv_pub_emp   "pub_emp_share2滞后一期"
+
+. label var iv_broad_tax "broad_tax_burden滞后一期"
+
+. 
+. ivregress 2sls ln_tfp aging_rate urban_rate sec_ind_share trade_openness ///
+>     i.year i.province_id ///
+>     (pub_emp_share2 broad_tax_burden = iv_pub_emp iv_broad_tax) ///
+>     if sample_main == 1, vce(cluster province_id)
+note: 2005.year identifies no observations in the sample.
+note: 2006.year identifies no observations in the sample.
+note: 2007.year identifies no observations in the sample.
+note: 2008.year identifies no observations in the sample.
+note: 2015.year identifies no observations in the sample.
+note: 2017.year omitted because of collinearity.
+note: 2018.year identifies no observations in the sample.
+note: 2019.year identifies no observations in the sample.
+note: 2020.year identifies no observations in the sample.
+note: 2021.year identifies no observations in the sample.
+note: 2022.year identifies no observations in the sample.
+note: 2023.year identifies no observations in the sample.
+note: 2024.year identifies no observations in the sample.
+
+Instrumental variables 2SLS regression            Number of obs   =        248
+                                                  Wald chi2(43)   =     437.76
+                                                  Prob > chi2     =     0.0000
+                                                  R-squared       =     0.9709
+                                                  Root MSE        =     .03629
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      z    P>|z|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .6259436   .1729632     3.62   0.000     .2869421    .9649452
+broad_tax_b~n |  -.0051834    .002028    -2.56   0.011    -.0091581   -.0012086
+   aging_rate |   .0121716   .0055024     2.21   0.027      .001387    .0229561
+   urban_rate |  -.0132697   .0037066    -3.58   0.000    -.0205346   -.0060049
+sec_ind_share |   .0061034   .0025445     2.40   0.016     .0011163    .0110904
+trade_openn~s |   .0001577   .0008525     0.18   0.853    -.0015132    .0018286
+              |
+         year |
+        2005  |          0  (empty)
+        2006  |          0  (empty)
+        2007  |          0  (empty)
+        2008  |          0  (empty)
+        2009  |  -.1945523   .0637554    -3.05   0.002    -.3195106   -.0695941
+        2010  |  -.1106184   .0603097    -1.83   0.067    -.2288231    .0075864
+        2011  |  -.0458639   .0546026    -0.84   0.401    -.1528831    .0611553
+        2012  |  -.0375229   .0477981    -0.79   0.432    -.1312055    .0561597
+        2013  |  -.0717521   .0446091    -1.61   0.108    -.1591843      .01568
+        2014  |  -.0705776   .0352056    -2.00   0.045    -.1395793   -.0015759
+        2015  |          0  (empty)
+        2016  |  -.0372381   .0108581    -3.43   0.001    -.0585196   -.0159567
+        2017  |          0  (omitted)
+        2018  |          0  (empty)
+        2019  |          0  (empty)
+        2020  |          0  (empty)
+        2021  |          0  (empty)
+        2022  |          0  (empty)
+        2023  |          0  (empty)
+        2024  |          0  (empty)
+              |
+  province_id |
+           2  |  -.5488585    .088855    -6.18   0.000     -.723011    -.374706
+           3  |  -.9971544   .1805515    -5.52   0.000    -1.351029     -.64328
+           4  |  -1.010376    .169641    -5.96   0.000    -1.342866   -.6778854
+           5  |  -.9261572   .1434918    -6.45   0.000    -1.207396   -.6449185
+           6  |  -1.021083   .1227679    -8.32   0.000    -1.261704   -.7804622
+           7  |  -1.181806   .1512574    -7.81   0.000    -1.478265   -.8853468
+           8  |  -.9366699   .1314565    -7.13   0.000     -1.19432   -.6790198
+           9  |   .1262315   .0342481     3.69   0.000     .0591065    .1933565
+          10  |  -.6006399   .1283392    -4.68   0.000      -.85218   -.3490998
+          11  |  -.6643819   .1243584    -5.34   0.000    -.9081198    -.420644
+          12  |  -.9892082    .182565    -5.42   0.000    -1.347029   -.6313873
+          13  |  -.6981335   .1422844    -4.91   0.000    -.9770057   -.4192612
+          14  |  -1.067077   .1726603    -6.18   0.000    -1.405485   -.7286687
+          15  |  -.8944602   .1654525    -5.41   0.000    -1.218741   -.5701794
+          16  |  -1.103886    .206741    -5.34   0.000    -1.509091   -.6986806
+          17  |  -.8140695   .1582078    -5.15   0.000    -1.124151   -.5039879
+          18  |  -.8216082   .1756478    -4.68   0.000    -1.165872   -.4773448
+          19  |  -.2956532   .1059279    -2.79   0.005    -.5032681   -.0880383
+          20  |  -1.048655   .1775161    -5.91   0.000     -1.39658     -.70073
+          21  |  -.6825415   .1181075    -5.78   0.000    -.9140279   -.4510552
+          22  |  -.9227199    .149963    -6.15   0.000    -1.216642   -.6287978
+          23  |  -.9925773   .1897758    -5.23   0.000    -1.364531   -.6206235
+          24  |   -1.02501   .1869013    -5.48   0.000     -1.39133   -.6586903
+          25  |  -1.018556   .1820611    -5.59   0.000    -1.375389   -.6617227
+          26  |  -.8900226   .2528885    -3.52   0.000    -1.385675   -.3943703
+          27  |  -.9884415   .1799589    -5.49   0.000    -1.341154   -.6357285
+          28  |  -1.163719   .1844263    -6.31   0.000    -1.525187   -.8022497
+          29  |  -.9804728   .1808222    -5.42   0.000    -1.334878   -.6260677
+          30  |   -.952634   .1507395    -6.32   0.000    -1.248078   -.6571901
+          31  |   -.964953   .1707738    -5.65   0.000    -1.299663   -.6302425
+              |
+        _cons |   1.841227   .2879461     6.39   0.000     1.276863    2.405591
+-------------------------------------------------------------------------------
+Endogenous: pub_emp_share2 broad_tax_burden
+Exogenous:  aging_rate urban_rate sec_ind_share trade_openness 2009.year
+            2010.year 2011.year 2012.year 2013.year 2014.year 2016.year
+            2.province_id 3.province_id 4.province_id 5.province_id
+            6.province_id 7.province_id 8.province_id 9.province_id
+            10.province_id 11.province_id 12.province_id 13.province_id
+            14.province_id 15.province_id 16.province_id 17.province_id
+            18.province_id 19.province_id 20.province_id 21.province_id
+            22.province_id 23.province_id 24.province_id 25.province_id
+            26.province_id 27.province_id 28.province_id 29.province_id
+            30.province_id 31.province_id iv_pub_emp iv_broad_tax
+
+. est store iv_model
+
+. 
+. estat firststage
+
+  Shea's partial R-squared
+  --------------------------------------------------
+               |     Shea's             Shea's
+      Variable |  partial R-sq.   adj. partial R-sq.
+  -------------+------------------------------------
+  pub_emp_sh~2 |     0.5340             0.3974
+  broad_tax_~n |     0.5553             0.4249
+  --------------------------------------------------
+
+
+. 
+. /*-----------------------------------------------------------
+>   第八步：异质性分析
+>   H3：挤出效应在市场化程度低的地区更强
+> -----------------------------------------------------------*/
+. 
+. gen region = .
+(620 missing values generated)
+
+. replace region = 1 if inlist(province_id, 1,2,3,6,9,10,11,13,15,19,21)
+(220 real changes made)
+
+. replace region = 2 if inlist(province_id, 4,7,8,12,14,16,17,18)
+(160 real changes made)
+
+. replace region = 3 if inlist(province_id, 5,20,22,23,24,25,26,27,28,29,30,31)
+(240 real changes made)
+
+. label define region_lbl 1 "东部" 2 "中部" 3 "西部"
+
+. label values region region_lbl
+
+. 
+. forvalues r = 1/3 {
+  2.     xtreg ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>         urban_rate sec_ind_share trade_openness ///
+>         i.year if sample_main == 1 & region == `r', fe vce(cluster province_id
+> )
+  3.     est store region_`r'
+  4. }
+
+Fixed-effects (within) regression               Number of obs     =         99
+Group variable: province_id                     Number of groups  =         11
+
+R-squared:                                      Obs per group:
+     Within  = 0.7545                                         min =          9
+     Between = 0.2777                                         avg =        9.0
+     Overall = 0.1808                                         max =          9
+
+                                                F(10, 10)         =          .
+corr(u_i, Xb) = -0.8608                         Prob > F          =          .
+
+                            (Std. err. adjusted for 11 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .0989218   .2121449     0.47   0.651    -.3737665      .57161
+broad_tax_b~n |   -.011222   .0045302    -2.48   0.033     -.021316    -.001128
+   aging_rate |   .0113065   .0063987     1.77   0.108    -.0029507    .0255638
+   urban_rate |  -.0150695   .0040086    -3.76   0.004    -.0240011   -.0061378
+sec_ind_share |  -.0009516    .004035    -0.24   0.818     -.009942    .0080388
+trade_openn~s |  -.0007034   .0007885    -0.89   0.393    -.0024603    .0010535
+              |
+         year |
+        2009  |  -.0141824   .0226979    -0.62   0.546    -.0647565    .0363917
+        2010  |   .0931906   .0190659     4.89   0.001     .0507092     .135672
+        2011  |   .1442206    .023605     6.11   0.000     .0916254    .1968159
+        2012  |   .1375248   .0269429     5.10   0.000     .0774922    .1975575
+        2013  |   .1063106    .039888     2.67   0.024     .0174345    .1951867
+        2014  |   .0782825   .0481213     1.63   0.135    -.0289384    .1855034
+        2016  |   .0651263    .080968     0.80   0.440    -.1152816    .2455342
+        2017  |   .0814463   .0915443     0.89   0.395    -.1225271    .2854196
+              |
+        _cons |    1.93962   .2569509     7.55   0.000     1.367098    2.512142
+--------------+----------------------------------------------------------------
+      sigma_u |  .39415382
+      sigma_e |    .036856
+          rho |  .99133229   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+Fixed-effects (within) regression               Number of obs     =         72
+Group variable: province_id                     Number of groups  =          8
+
+R-squared:                                      Obs per group:
+     Within  = 0.9377                                         min =          9
+     Between = 0.5361                                         avg =        9.0
+     Overall = 0.5708                                         max =          9
+
+                                                F(7, 7)           =          .
+corr(u_i, Xb) = -0.7296                         Prob > F          =          .
+
+                             (Std. err. adjusted for 8 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   1.436157   .1737644     8.26   0.000      1.02527    1.847045
+broad_tax_b~n |  -.0239664   .0043913    -5.46   0.001    -.0343502   -.0135826
+   aging_rate |  -.0021361   .0057855    -0.37   0.723    -.0158167    .0115445
+   urban_rate |  -.0220819   .0037348    -5.91   0.001    -.0309133   -.0132506
+sec_ind_share |   .0051663    .001791     2.88   0.023     .0009314    .0094012
+trade_openn~s |  -.0051914   .0016956    -3.06   0.018    -.0092009   -.0011819
+              |
+         year |
+        2009  |   .0598878   .0111416     5.38   0.001      .033542    .0862336
+        2010  |   .1753954   .0190704     9.20   0.000      .130301    .2204897
+        2011  |     .29526   .0336146     8.78   0.000     .2157741    .3747459
+        2012  |   .3493871   .0403513     8.66   0.000     .2539715    .4448027
+        2013  |   .3299844   .0525308     6.28   0.000     .2057689    .4541999
+        2014  |   .3646607   .0535332     6.81   0.000     .2380749    .4912466
+        2016  |   .4701949   .0700706     6.71   0.000     .3045042    .6358856
+        2017  |   .5553947   .0824564     6.74   0.000     .3604163     .750373
+              |
+        _cons |   1.212129   .2771496     4.37   0.003      .556774    1.867483
+--------------+----------------------------------------------------------------
+      sigma_u |  .17009673
+      sigma_e |  .02308001
+          rho |  .98192173   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+Fixed-effects (within) regression               Number of obs     =        108
+Group variable: province_id                     Number of groups  =         12
+
+R-squared:                                      Obs per group:
+     Within  = 0.8259                                         min =          9
+     Between = 0.6291                                         avg =        9.0
+     Overall = 0.6532                                         max =          9
+
+                                                F(11, 11)         =          .
+corr(u_i, Xb) = -0.6488                         Prob > F          =          .
+
+                            (Std. err. adjusted for 12 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .9597667   .2069418     4.64   0.001      .504291    1.415243
+broad_tax_b~n |  -.0050396    .001566    -3.22   0.008    -.0084864   -.0015929
+   aging_rate |  -.0097242   .0090816    -1.07   0.307    -.0297127    .0102644
+   urban_rate |  -.0023372   .0064436    -0.36   0.724    -.0165195    .0118451
+sec_ind_share |   .0031842   .0033931     0.94   0.368    -.0042839    .0106523
+trade_openn~s |   .0008303   .0007951     1.04   0.319    -.0009196    .0025802
+              |
+         year |
+        2009  |   .0244042    .019673     1.24   0.241    -.0188959    .0677043
+        2010  |   .0929194   .0310086     3.00   0.012       .02467    .1611688
+        2011  |   .1640282    .039823     4.12   0.002     .0763783     .251678
+        2012  |   .1759704   .0513176     3.43   0.006     .0630212    .2889196
+        2013  |   .1263463   .0569927     2.22   0.049     .0009063    .2517863
+        2014  |   .1253053   .0697905     1.80   0.100    -.0283025    .2789132
+        2016  |   .1292189    .104935     1.23   0.244    -.1017415    .3601794
+        2017  |   .1592834   .1190757     1.34   0.208    -.1028005    .4213674
+              |
+        _cons |   .3275103   .1813848     1.81   0.098    -.0717149    .7267355
+--------------+----------------------------------------------------------------
+      sigma_u |     .09454
+      sigma_e |  .03788477
+          rho |   .8616363   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. 
+. esttab region_1 region_2 region_3 using "heterogeneity.rtf", replace ///
+>     star(* 0.1 ** 0.05 *** 0.01) b(3) se(3) ///
+>     title("表5 异质性分析：分区域回归（因变量：ln_TFP）") ///
+>     mtitles("东部" "中部" "西部")
+(output written to heterogeneity.rtf)
+
+. 
+. * 交互项检验
+. gen pub_emp_west  = pub_emp_share2   * (region == 3)
+(248 missing values generated)
+
+. gen broad_tx_west = broad_tax_burden * (region == 3)
+(31 missing values generated)
+
+. label var pub_emp_west  "公共部门占比×西部"
+
+. label var broad_tx_west "广义税负×西部"
+
+. 
+. xtreg ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>     pub_emp_west broad_tx_west ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1, fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        279
+Group variable: province_id                     Number of groups  =         31
+
+R-squared:                                      Obs per group:
+     Within  = 0.7709                                         min =          9
+     Between = 0.1918                                         avg =        9.0
+     Overall = 0.1039                                         max =          9
+
+                                                F(16, 30)         =      28.57
+corr(u_i, Xb) = -0.8613                         Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |    .652146   .1598144     4.08   0.000     .3257614    .9785305
+broad_tax_b~n |  -.0145709   .0037525    -3.88   0.001    -.0222345   -.0069073
+   aging_rate |   .0113432   .0050368     2.25   0.032     .0010567    .0216297
+ pub_emp_west |   .1321983   .1853288     0.71   0.481    -.2462936    .5106901
+broad_tx_west |   .0106976   .0035841     2.98   0.006     .0033779    .0180173
+   urban_rate |  -.0138761   .0025826    -5.37   0.000    -.0191504   -.0086018
+sec_ind_share |    .005064   .0020002     2.53   0.017      .000979    .0091491
+trade_openn~s |   .0000123   .0006879     0.02   0.986    -.0013926    .0014173
+              |
+         year |
+        2009  |    .029085   .0116115     2.50   0.018     .0053711    .0527989
+        2010  |   .1173511   .0141806     8.28   0.000     .0883904    .1463118
+        2011  |   .1884607   .0195149     9.66   0.000      .148606    .2283154
+        2012  |   .2016634   .0250629     8.05   0.000      .150478    .2528487
+        2013  |   .1703289   .0277998     6.13   0.000     .1135541    .2271037
+        2014  |   .1722509   .0329363     5.23   0.000      .104986    .2395158
+        2016  |   .2178878   .0498434     4.37   0.000     .1160941    .3196815
+        2017  |    .255692     .05718     4.47   0.000     .1389149    .3724692
+              |
+        _cons |   .9131985    .146069     6.25   0.000     .6148857    1.211511
+--------------+----------------------------------------------------------------
+      sigma_u |  .39162442
+      sigma_e |   .0386482
+          rho |  .99035483   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store interaction
+
+. 
+. esttab interaction using "interaction.rtf", replace ///
+>     star(* 0.1 ** 0.05 *** 0.01) b(3) se(3) ///
+>     title("表6 交互项检验（西部虚拟变量）")
+(output written to interaction.rtf)
+
+. 
+. /*-----------------------------------------------------------
+>   第九步：稳健性检验
+> -----------------------------------------------------------*/
+. 
+. * 稳健性1：替换α=0.4（资本弹性敏感性）
+. xtreg ln_tfp_alt pub_emp_share2 broad_tax_burden aging_rate ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1, fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        279
+Group variable: province_id                     Number of groups  =         31
+
+R-squared:                                      Obs per group:
+     Within  = 0.6188                                         min =          9
+     Between = 0.0186                                         avg =        9.0
+     Overall = 0.0004                                         max =          9
+
+                                                F(14, 30)         =      17.39
+corr(u_i, Xb) = -0.5972                         Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+   ln_tfp_alt | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .7825929   .1701907     4.60   0.000     .4350172    1.130169
+broad_tax_b~n |   -.003953   .0012172    -3.25   0.003    -.0064389   -.0014671
+   aging_rate |   .0089903   .0060148     1.49   0.145    -.0032935    .0212741
+   urban_rate |  -.0089753   .0033771    -2.66   0.012    -.0158724   -.0020783
+sec_ind_share |   .0057739   .0021516     2.68   0.012     .0013798     .010168
+trade_openn~s |   .0004567   .0008273     0.55   0.585    -.0012329    .0021462
+              |
+         year |
+        2009  |   .0280723    .011815     2.38   0.024     .0039428    .0522017
+        2010  |   .1158221   .0148123     7.82   0.000     .0855712    .1460729
+        2011  |   .1798009   .0201645     8.92   0.000     .1386194    .2209823
+        2012  |   .1947641   .0253764     7.67   0.000     .1429385    .2465897
+        2013  |   .1621925   .0276455     5.87   0.000     .1057329    .2186521
+        2014  |   .1730817   .0347931     4.97   0.000     .1020248    .2441386
+        2016  |   .2213533   .0540229     4.10   0.000     .1110238    .3316828
+        2017  |   .2650601    .062106     4.27   0.000     .1382228    .3918975
+              |
+        _cons |   .8456625   .1803322     4.69   0.000     .4773751     1.21395
+--------------+----------------------------------------------------------------
+      sigma_u |  .23953581
+      sigma_e |  .04372866
+          rho |  .96774821   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store robust1
+
+. 
+. * 稳健性2：剔除直辖市
+. xtreg ln_tfp pub_emp_share2 broad_tax_burden aging_rate ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1 & !inlist(province_id,1,2,9,22), ///
+>     fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        243
+Group variable: province_id                     Number of groups  =         27
+
+R-squared:                                      Obs per group:
+     Within  = 0.7864                                         min =          9
+     Between = 0.3097                                         avg =        9.0
+     Overall = 0.3902                                         max =          9
+
+                                                F(14, 26)         =      32.43
+corr(u_i, Xb) = -0.0779                         Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 27 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .8140548   .1385459     5.88   0.000     .5292696     1.09884
+broad_tax_b~n |  -.0043813    .001318    -3.32   0.003    -.0070905    -.001672
+   aging_rate |   .0034307   .0061157     0.56   0.580    -.0091403    .0160017
+   urban_rate |  -.0066744   .0040181    -1.66   0.109    -.0149336    .0015849
+sec_ind_share |   .0055373   .0023714     2.34   0.028     .0006629    .0104117
+trade_openn~s |   .0018539   .0007082     2.62   0.015     .0003982    .0033096
+              |
+         year |
+        2009  |   .0228484   .0114775     1.99   0.057     -.000744    .0464408
+        2010  |   .0875194   .0165881     5.28   0.000     .0534221    .1216167
+        2011  |   .1491904   .0237558     6.28   0.000     .1003597    .1980211
+        2012  |   .1530214   .0303207     5.05   0.000     .0906963    .2153466
+        2013  |   .1050989   .0343854     3.06   0.005     .0344187    .1757792
+        2014  |   .1032522   .0418852     2.47   0.021      .017156    .1893485
+        2016  |   .1328366   .0623859     2.13   0.043     .0046006    .2610726
+        2017  |   .1707484   .0727941     2.35   0.027     .0211181    .3203788
+              |
+        _cons |   .3708374   .1673846     2.22   0.036     .0267733    .7149014
+--------------+----------------------------------------------------------------
+      sigma_u |  .14369387
+      sigma_e |  .03902687
+          rho |  .93130236   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store robust2
+
+. 
+. * 稳健性3：狭义税负口径对比
+. xtreg ln_tfp pub_emp_share2 macro_tax_burden aging_rate ///
+>     urban_rate sec_ind_share trade_openness ///
+>     i.year if sample_main == 1, fe vce(cluster province_id)
+
+Fixed-effects (within) regression               Number of obs     =        279
+Group variable: province_id                     Number of groups  =         31
+
+R-squared:                                      Obs per group:
+     Within  = 0.7387                                         min =          9
+     Between = 0.3516                                         avg =        9.0
+     Overall = 0.1983                                         max =          9
+
+                                                F(14, 30)         =      21.53
+corr(u_i, Xb) = -0.8621                         Prob > F          =     0.0000
+
+                            (Std. err. adjusted for 31 clusters in province_id)
+-------------------------------------------------------------------------------
+              |               Robust
+       ln_tfp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+pub_emp_sha~2 |   .6573298    .161843     4.06   0.000     .3268024    .9878573
+macro_tax_b~n |  -.0186612   .0075275    -2.48   0.019    -.0340344    -.003288
+   aging_rate |   .0099201   .0052291     1.90   0.067    -.0007591    .0205994
+   urban_rate |  -.0118506   .0036775    -3.22   0.003    -.0193612   -.0043401
+sec_ind_share |   .0065889   .0018849     3.50   0.001     .0027395    .0104383
+trade_openn~s |   -.000018   .0006449    -0.03   0.978    -.0013351    .0012991
+              |
+         year |
+        2009  |   .0069057   .0101373     0.68   0.501    -.0137974    .0276087
+        2010  |   .0939282    .016176     5.81   0.000     .0608925    .1269639
+        2011  |   .1595461   .0220937     7.22   0.000     .1144248    .2046674
+        2012  |   .1700063   .0289957     5.86   0.000     .1107892    .2292235
+        2013  |   .1406419   .0337735     4.16   0.000     .0716671    .2096166
+        2014  |   .1442319   .0409536     3.52   0.001     .0605934    .2278703
+        2016  |   .1534477   .0573905     2.67   0.012     .0362408    .2706547
+        2017  |   .1919524   .0655548     2.93   0.006     .0580717    .3258331
+              |
+        _cons |    .722277   .1860831     3.88   0.001     .3422447    1.102309
+--------------+----------------------------------------------------------------
+      sigma_u |  .36978933
+      sigma_e |  .04110493
+          rho |  .98779478   (fraction of variance due to u_i)
+-------------------------------------------------------------------------------
+
+. est store robust3
+
+. 
+. esttab robust1 robust2 robust3 using "robustness.rtf", replace ///
+>     star(* 0.1 ** 0.05 *** 0.01) b(3) se(3) ///
+>     title("表7 稳健性检验（因变量：ln_TFP）") ///
+>     mtitles("α=0.4替换" "剔除直辖市" "狭义税负对比")
+(output written to robustness.rtf)
+
+. 
+. /*-----------------------------------------------------------
+>   第十步：输出汇总
+> -----------------------------------------------------------*/
+. 
+. di "======================================"
+======================================
+
+. di "所有分析完成"
+所有分析完成
+
+. di "样本：31省，2008-2017年，N=310"
+样本：31省，2008-2017年，N=310
+
+. di "因变量：ln_TFP（索洛残差法，α=0.5，δ=0.096）"
+因变量：ln_TFP（索洛残差法，α=0.5，δ=0.096）
+
+. di "核心解释变量：pub_emp_share2，broad_tax_burden"
+核心解释变量：pub_emp_share2，broad_tax_burden
+
+. di "生成文件："
+生成文件：
+
+. di "  desc_stats.rtf       描述性统计"
+  desc_stats.rtf       描述性统计
+
+. di "  main_regression.rtf  主回归"
+  main_regression.rtf  主回归
+
+. di "  mediation.rtf        中介效应"
+  mediation.rtf        中介效应
+
+. di "  iv_regression.rtf    工具变量"
+  iv_regression.rtf    工具变量
+
+. di "  heterogeneity.rtf    异质性分析"
+  heterogeneity.rtf    异质性分析
+
+. di "  interaction.rtf      交互项检验"
+  interaction.rtf      交互项检验
+
+. di "  robustness.rtf       稳健性检验"
+  robustness.rtf       稳健性检验
+
+. di "======================================"
+======================================
+
+. 
+. log close
+      name:  <unnamed>
+       log:  C:\Users\Administrator\Downloads\thesis_log.txt
+  log type:  text
+ closed on:  14 Mar 2026, 05:31:12
+--------------------------------------------------------------------------------

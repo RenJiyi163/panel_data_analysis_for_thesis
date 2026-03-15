@@ -1,0 +1,65 @@
+--------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\Administrator\Downloads\tfp_estimation_log.txt
+  log type:  text
+ opened on:  12 Mar 2026, 14:15:38
+
+. 
+. * ───────────────────────────────────────────────
+. * 第一部分：导入数据 + 基础清理
+. * ───────────────────────────────────────────────
+. 
+. import delimited "panel_with_broad_tax.csv", encoding(UTF-8) clear
+(33 vars, 620 obs)
+
+. 
+. * 保留核心变量，生成面板标识
+. xtset province_id year
+
+Panel variable: province_id (strongly balanced)
+ Time variable: year, 2005 to 2024
+         Delta: 1 unit
+
+. 
+. * 只保留2008-2019（与你论文样本一致）
+. keep if year >= 2008 & year <= 2019
+(248 observations deleted)
+
+. 
+. * 关键变量检查
+. summ gdp sec_ind_share urban_rate emp_total_10k gov_exp_bn patent_apps aging_r
+> ate broad_tax_burden
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+         gdp |        372    20607.33    18705.81      405.2   110468.1
+sec_ind_sh~e |        372    44.76809    8.685984       16.2       61.5
+  urban_rate |        372    55.44333    13.99737       21.9       89.6
+emp_tota~10k |         93    2416.634    1668.303     160.41    6041.56
+  gov_exp_bn |        372    4056.209    2668.128     324.61   17297.85
+-------------+---------------------------------------------------------
+ patent_apps |        372    24427.06    37079.73         39     216469
+  aging_rate |        372    9.869933     2.22689     4.8244     16.263
+broad_tax_~n |        372    27.88094    19.94744   9.849381    132.619
+
+. 
+. * ───────────────────────────────────────────────
+. * 第二部分：尝试估算TFP（三种近似方案，任选其一）
+. * ───────────────────────────────────────────────
+. 
+. * -------------------------------
+. * 方案1：最粗暴的Solow残差法（不需要资本存量）
+. * 假设：α = 资本份额 ≈ 0.4～0.5（中国常用0.45～0.5）
+. * TFP_growth ≈ gdp_growth - α × capital_growth - (1-α) × labor_growth
+. * 但缺少资本增长 → 用固定资产投资增长率高度近似代替
+. * -------------------------------
+. 
+. gen ln_gdp = ln(gdp) if gdp > 0
+variable ln_gdp already defined
+r(110);
+
+end of do-file
+
+r(110);
+
+. exit, clear

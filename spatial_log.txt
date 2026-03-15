@@ -1,0 +1,66 @@
+--------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\Administrator\Downloads\spatial_log.txt
+  log type:  text
+ opened on:  14 Mar 2026, 09:26:15
+
+. 
+. import delimited "panel_with_broad_tax.csv", encoding(UTF-8) clear
+(33 vars, 620 obs)
+
+. 
+. /*-----------------------------------------------------------
+>   第一步：变量构造
+> -----------------------------------------------------------*/
+. gen labor = emp_urban_unit_10k / (emp_urban_unit_10k + private_emp_10k)
+(248 missing values generated)
+
+. gen pub_emp_share2 = emp_urban_unit_10k / (emp_urban_unit_10k + private_emp_10k)
+(248 missing values generated)
+
+. 
+. scalar delta = 0.096
+
+. scalar g_inv  = 0.161
+
+. 
+. gen capital = .
+(620 missing values generated)
+
+. levelsof province_id, local(provinces)
+1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+
+. foreach p of local provinces {
+  2.     quietly sum fai_bn if province_id == `p' & year == 2008
+  3.     local I2008 = r(mean)
+  4.     quietly replace capital = `I2008' / (g_inv + delta) ///
+>         if province_id == `p' & year == 2007
+  5. }
+
+. sort province_id year
+
+. foreach y of numlist 2008/2017 {
+  2.     replace capital = (1 - delta) * L.capital + fai_bn ///
+>         if year == `y' & fai_bn != .
+  3. }
+time variable not set
+r(111);
+
+end of do-file
+
+r(111);
+
+. do master_all_v2.do
+
+. /*===========================================================
+>   修复版：master_all_v2.do
+>   修复点：
+>   1. DEA：改为自动安装
+>   2. SFA：bc92 只接受 tnormal；半正态改用 bc95 模型
+> ===========================================================*/
+. 
+. clear all
+
+. set more off
+
+. capture log close
