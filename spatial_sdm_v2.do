@@ -54,16 +54,7 @@ gen sample_lag  = (year >= 2011 & year <= 2017) ///
   第二步：声明空间数据结构（Stata 15+必须）
   sp set 命令告诉Stata哪个变量是空间ID
 -----------------------------------------------------------*/
-capture noisily spset province_id
-if _rc != 0 {
-    di as txt "spset 不可用，回退到旧语法 sp set province_id"
-    capture noisily sp set province_id
-}
-
-if _rc != 0 {
-    di as err "空间数据声明失败：spset/sp set 均不可用"
-    exit 103
-}
+spset province_id
 
 /*-----------------------------------------------------------
   第三步：构建经济距离权重矩阵（主要矩阵）
@@ -115,24 +106,9 @@ mata:
     st_matrix("W_econ_raw", W_econ_m)
 end
 
-* 将矩阵与province_id绑定，转为spmatrix格式
-* 兼容不同版本：依次尝试 spmatrix spfrommata -> spfrommata -> userdefined -> frommatrix
-capture noisily spmatrix spfrommata W_econ = W_econ_m, replace
-if _rc != 0 {
-    capture noisily spfrommata W_econ W_econ_m, replace
-}
-if _rc != 0 {
-    capture noisily spmatrix userdefined W_econ = W_econ_raw, replace
-}
-if _rc != 0 {
-    capture noisily spmatrix frommatrix W_econ_raw, id(province_id) name(W_econ) replace
-}
-
-capture noisily spmatrix summarize W_econ
-if _rc != 0 {
-    di as err "W_econ 创建失败：当前 Stata 不支持可用的矩阵导入语法"
-    exit 198
-}
+* 将矩阵转为spmatrix格式（单一路径：spmatrix spfrommata）
+spmatrix spfrommata W_econ W_econ_m, replace
+spmatrix summarize W_econ
 
 /*-----------------------------------------------------------
   第四步：构建地理邻接权重矩阵（稳健性对比）
@@ -251,22 +227,8 @@ mata:
     st_matrix("W_adj_raw", W_adj_m)
 end
 
-capture noisily spmatrix spfrommata W_adj = W_adj_m, replace
-if _rc != 0 {
-    capture noisily spfrommata W_adj W_adj_m, replace
-}
-if _rc != 0 {
-    capture noisily spmatrix userdefined W_adj = W_adj_raw, replace
-}
-if _rc != 0 {
-    capture noisily spmatrix frommatrix W_adj_raw, id(province_id) name(W_adj) replace
-}
-
-capture noisily spmatrix summarize W_adj
-if _rc != 0 {
-    di as err "W_adj 创建失败：当前 Stata 不支持可用的矩阵导入语法"
-    exit 198
-}
+spmatrix spfrommata W_adj W_adj_m, replace
+spmatrix summarize W_adj
 
 /*-----------------------------------------------------------
   第五步：Moran's I 空间自相关检验
