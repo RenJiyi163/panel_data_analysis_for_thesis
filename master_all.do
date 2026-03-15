@@ -169,7 +169,16 @@ di as txt "========================================"
 
 build_vars
 
-spset province_id year
+capture noisily spset province_id
+if _rc != 0 {
+    di as txt "spset 不可用，回退到旧语法 sp set province_id"
+    capture noisily sp set province_id
+}
+
+if _rc != 0 {
+    di as err "空间数据声明失败：spset/sp set 均不可用"
+    exit 103
+}
 
 * ---- 3.1 构建经济距离权重矩阵 ----
 

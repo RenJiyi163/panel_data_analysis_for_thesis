@@ -54,7 +54,16 @@ gen sample_lag  = (year >= 2011 & year <= 2017) ///
   第二步：声明空间数据结构（Stata 15+必须）
   sp set 命令告诉Stata哪个变量是空间ID
 -----------------------------------------------------------*/
-spset province_id year
+capture noisily spset province_id
+if _rc != 0 {
+    di as txt "spset 不可用，回退到旧语法 sp set province_id"
+    capture noisily sp set province_id
+}
+
+if _rc != 0 {
+    di as err "空间数据声明失败：spset/sp set 均不可用"
+    exit 103
+}
 
 /*-----------------------------------------------------------
   第三步：构建经济距离权重矩阵（主要矩阵）
