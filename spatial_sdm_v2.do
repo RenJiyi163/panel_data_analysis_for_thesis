@@ -107,7 +107,7 @@ mata:
 end
 
 * 将矩阵转为spmatrix格式（单一路径：spmatrix spfrommata）
-spmatrix spfrommata W_econ W_econ_m, replace
+spmatrix spfrommata W_econ = W_econ_m, replace
 spmatrix summarize W_econ
 
 /*-----------------------------------------------------------
@@ -227,7 +227,7 @@ mata:
     st_matrix("W_adj_raw", W_adj_m)
 end
 
-spmatrix spfrommata W_adj W_adj_m, replace
+spmatrix spfrommata W_adj = W_adj_m, replace
 spmatrix summarize W_adj
 
 /*-----------------------------------------------------------

@@ -302,8 +302,8 @@ end
 mata: W_econ_m = st_matrix("W_econ_raw")
 mata: W_adj_m  = st_matrix("W_adj_raw")
 
-spmatrix spfrommata W_econ W_econ_m, replace
-spmatrix spfrommata W_adj  W_adj_m,  replace
+spmatrix spfrommata W_econ = W_econ_m, replace
+spmatrix spfrommata W_adj  = W_adj_m,  replace
 
 spmatrix summarize W_econ
 spmatrix summarize W_adj
