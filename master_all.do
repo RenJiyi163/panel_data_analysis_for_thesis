@@ -169,6 +169,8 @@ di as txt "========================================"
 
 build_vars
 
+spset province_id
+
 * ---- 3.1 构建经济距离权重矩阵 ----
 
 * 计算各省2008-2017年人均GDP均值
@@ -296,10 +298,15 @@ mata:
     st_matrix("W_adj_raw", A)
 end
 
-* ---- 3.3 存为spmatrix对象（Stata 18内置）----
-* Stata 18 spmatrix frommatrix 语法
-spmatrix frommatrix W_econ_raw, id(province_id) name(W_econ) replace
-spmatrix frommatrix W_adj_raw,  id(province_id) name(W_adj)  replace
+* ---- 3.3 存为spmatrix对象（单一路径：spmatrix spfrommata）----
+mata: W_econ_m = st_matrix("W_econ_raw")
+mata: W_adj_m  = st_matrix("W_adj_raw")
+
+spmatrix spfrommata W_econ = W_econ_m, replace
+spmatrix spfrommata W_adj  = W_adj_m,  replace
+
+spmatrix summarize W_econ
+spmatrix summarize W_adj
 
 * ---- 3.4 Moran's I 简易诊断 ----
 * 用空间滞后变量的相关系数初步诊断
