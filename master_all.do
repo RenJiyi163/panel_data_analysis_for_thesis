@@ -169,6 +169,8 @@ di as txt "========================================"
 
 build_vars
 
+spset province_id
+
 * ---- 3.1 构建经济距离权重矩阵 ----
 
 * 计算各省2008-2017年人均GDP均值
@@ -296,10 +298,34 @@ mata:
     st_matrix("W_adj_raw", A)
 end
 
-* ---- 3.3 存为spmatrix对象（Stata 18内置）----
-* Stata 18 spmatrix frommatrix 语法
-spmatrix frommatrix W_econ_raw, id(province_id) name(W_econ) replace
-spmatrix frommatrix W_adj_raw,  id(province_id) name(W_adj)  replace
+* ---- 3.3 存为spmatrix对象（兼容不同Stata版本）----
+* 优先使用 spfrommata；若不可用，再回退 frommatrix
+mata: W_econ_m = st_matrix("W_econ_raw")
+mata: W_adj_m  = st_matrix("W_adj_raw")
+
+capture noisily spmatrix spfrommata W_econ = W_econ_m, id(province_id) normalize(none) replace
+if _rc != 0 {
+    di as txt "spfrommata 不可用，回退到 frommatrix ..."
+    capture noisily spmatrix frommatrix W_econ_raw, id(province_id) name(W_econ) replace
+}
+
+capture noisily spmatrix spfrommata W_adj = W_adj_m, id(province_id) normalize(none) replace
+if _rc != 0 {
+    di as txt "spfrommata 不可用，回退到 frommatrix ..."
+    capture noisily spmatrix frommatrix W_adj_raw, id(province_id) name(W_adj) replace
+}
+
+capture noisily spmatrix summarize W_econ
+if _rc != 0 {
+    di as err "W_econ 创建失败：请检查 Stata 版本的 spmatrix 子命令支持"
+    exit 198
+}
+
+capture noisily spmatrix summarize W_adj
+if _rc != 0 {
+    di as err "W_adj 创建失败：请检查 Stata 版本的 spmatrix 子命令支持"
+    exit 198
+}
 
 * ---- 3.4 Moran's I 简易诊断 ----
 * 用空间滞后变量的相关系数初步诊断
