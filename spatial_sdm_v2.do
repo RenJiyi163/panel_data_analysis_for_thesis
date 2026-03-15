@@ -32,6 +32,7 @@ foreach p of local provinces {
         if province_id == `p' & year == 2007
 }
 sort province_id year
+xtset province_id year
 foreach y of numlist 2008/2017 {
     replace capital = (1 - delta) * L.capital + fai_bn ///
         if year == `y' & fai_bn != .
@@ -41,8 +42,6 @@ gen ln_gdp_val = ln(gdp_bn)
 gen ln_capital = ln(capital)
 gen ln_labor_v = ln(emp_urban_unit_10k + private_emp_10k)
 gen ln_tfp     = ln_gdp_val - 0.5*ln_capital - 0.5*ln_labor_v
-
-xtset province_id year
 
 gen L3_pub_emp = L3.pub_emp_share2
 gen L3_aging   = L3.aging_rate
@@ -55,7 +54,16 @@ gen sample_lag  = (year >= 2011 & year <= 2017) ///
   第二步：声明空间数据结构（Stata 15+必须）
   sp set 命令告诉Stata哪个变量是空间ID
 -----------------------------------------------------------*/
-sp set province_id
+capture noisily spset province_id
+if _rc != 0 {
+    di as txt "spset 不可用，回退到旧语法 sp set province_id"
+    capture noisily sp set province_id
+}
+
+if _rc != 0 {
+    di as err "空间数据声明失败：spset/sp set 均不可用"
+    exit 103
+}
 
 /*-----------------------------------------------------------
   第三步：构建经济距离权重矩阵（主要矩阵）
@@ -85,32 +93,46 @@ restore
 mata:
     gdppc = st_matrix("GDPPC")   // 31×1
     n = rows(gdppc)
-    W = J(n, n, 0)
+    W_econ_m = J(n, n, 0)
     
     for (i=1; i<=n; i++) {
         for (j=1; j<=n; j++) {
             if (i != j) {
                 diff = abs(gdppc[i,1] - gdppc[j,1])
-                if (diff > 0) W[i,j] = 1 / diff
-                else W[i,j] = 0
+                if (diff > 0) W_econ_m[i,j] = 1 / diff
+                else W_econ_m[i,j] = 0
             }
         }
     }
     
     // 行标准化
     for (i=1; i<=n; i++) {
-        rs = sum(W[i,.])
-        if (rs > 0) W[i,.] = W[i,.] / rs
+        rs = sum(W_econ_m[i,.])
+        if (rs > 0) W_econ_m[i,.] = W_econ_m[i,.] / rs
     }
     
-    printf("经济距离矩阵行和均值（应为1）: %f\n", mean(rowsum(W)))
-    st_matrix("W_econ_raw", W)
+    printf("经济距离矩阵行和均值（应为1）: %f\n", mean(rowsum(W_econ_m)))
+    st_matrix("W_econ_raw", W_econ_m)
 end
 
 * 将矩阵与province_id绑定，转为spmatrix格式
-* Stata 15+ spmatrix frommatrix
-spmatrix frommatrix W_econ_raw, id(province_id) replace ///
-    name(W_econ) normalized(row)
+* 兼容不同版本：依次尝试 spmatrix spfrommata -> spfrommata -> userdefined -> frommatrix
+capture noisily spmatrix spfrommata W_econ = W_econ_m, replace
+if _rc != 0 {
+    capture noisily spfrommata W_econ W_econ_m, replace
+}
+if _rc != 0 {
+    capture noisily spmatrix userdefined W_econ = W_econ_raw, replace
+}
+if _rc != 0 {
+    capture noisily spmatrix frommatrix W_econ_raw, id(province_id) name(W_econ) replace
+}
+
+capture noisily spmatrix summarize W_econ
+if _rc != 0 {
+    di as err "W_econ 创建失败：当前 Stata 不支持可用的矩阵导入语法"
+    exit 198
+}
 
 /*-----------------------------------------------------------
   第四步：构建地理邻接权重矩阵（稳健性对比）
@@ -126,111 +148,125 @@ spmatrix frommatrix W_econ_raw, id(province_id) replace ///
 
 mata:
     n = 31
-    A = J(n, n, 0)
+    W_adj_m = J(n, n, 0)
     
     // 完整邻接关系（对称，已验证）
-    // 格式：A[i,j]=1 表示省i与省j陆地相邻
+    // 格式：W_adj_m[i,j]=1 表示省i与省j陆地相邻
     
     // 1-北京
-    A[1,2]=1; A[1,3]=1
+    W_adj_m[1,2]=1; W_adj_m[1,3]=1
     // 2-天津
-    A[2,1]=1; A[2,3]=1
+    W_adj_m[2,1]=1; W_adj_m[2,3]=1
     // 3-河北
-    A[3,1]=1; A[3,2]=1; A[3,4]=1; A[3,5]=1
-    A[3,6]=1; A[3,15]=1; A[3,16]=1
+    W_adj_m[3,1]=1; W_adj_m[3,2]=1; W_adj_m[3,4]=1; W_adj_m[3,5]=1
+    W_adj_m[3,6]=1; W_adj_m[3,15]=1; W_adj_m[3,16]=1
     // 4-山西
-    A[4,3]=1; A[4,5]=1; A[4,16]=1; A[4,27]=1
+    W_adj_m[4,3]=1; W_adj_m[4,5]=1; W_adj_m[4,16]=1; W_adj_m[4,27]=1
     // 5-内蒙古
-    A[5,3]=1; A[5,4]=1; A[5,6]=1; A[5,7]=1
-    A[5,8]=1; A[5,27]=1; A[5,28]=1; A[5,30]=1
+    W_adj_m[5,3]=1; W_adj_m[5,4]=1; W_adj_m[5,6]=1; W_adj_m[5,7]=1
+    W_adj_m[5,8]=1; W_adj_m[5,27]=1; W_adj_m[5,28]=1; W_adj_m[5,30]=1
     // 6-辽宁
-    A[6,3]=1; A[6,5]=1; A[6,7]=1
+    W_adj_m[6,3]=1; W_adj_m[6,5]=1; W_adj_m[6,7]=1
     // 7-吉林
-    A[7,5]=1; A[7,6]=1; A[7,8]=1
+    W_adj_m[7,5]=1; W_adj_m[7,6]=1; W_adj_m[7,8]=1
     // 8-黑龙江
-    A[8,5]=1; A[8,7]=1
+    W_adj_m[8,5]=1; W_adj_m[8,7]=1
     // 9-上海
-    A[9,10]=1; A[9,11]=1
+    W_adj_m[9,10]=1; W_adj_m[9,11]=1
     // 10-江苏
-    A[10,9]=1; A[10,11]=1; A[10,12]=1; A[10,15]=1
+    W_adj_m[10,9]=1; W_adj_m[10,11]=1; W_adj_m[10,12]=1; W_adj_m[10,15]=1
     // 11-浙江
-    A[11,9]=1; A[11,10]=1; A[11,12]=1
-    A[11,13]=1; A[11,14]=1
+    W_adj_m[11,9]=1; W_adj_m[11,10]=1; W_adj_m[11,12]=1
+    W_adj_m[11,13]=1; W_adj_m[11,14]=1
     // 12-安徽
-    A[12,10]=1; A[12,11]=1; A[12,14]=1
-    A[12,15]=1; A[12,16]=1; A[12,17]=1
+    W_adj_m[12,10]=1; W_adj_m[12,11]=1; W_adj_m[12,14]=1
+    W_adj_m[12,15]=1; W_adj_m[12,16]=1; W_adj_m[12,17]=1
     // 13-福建
-    A[13,11]=1; A[13,14]=1; A[13,19]=1
+    W_adj_m[13,11]=1; W_adj_m[13,14]=1; W_adj_m[13,19]=1
     // 14-江西
-    A[14,11]=1; A[14,12]=1; A[14,13]=1
-    A[14,17]=1; A[14,18]=1; A[14,19]=1
+    W_adj_m[14,11]=1; W_adj_m[14,12]=1; W_adj_m[14,13]=1
+    W_adj_m[14,17]=1; W_adj_m[14,18]=1; W_adj_m[14,19]=1
     // 15-山东
-    A[15,3]=1; A[15,10]=1; A[15,12]=1; A[15,16]=1
+    W_adj_m[15,3]=1; W_adj_m[15,10]=1; W_adj_m[15,12]=1; W_adj_m[15,16]=1
     // 16-河南
-    A[16,3]=1; A[16,4]=1; A[16,12]=1
-    A[16,15]=1; A[16,17]=1; A[16,27]=1
+    W_adj_m[16,3]=1; W_adj_m[16,4]=1; W_adj_m[16,12]=1
+    W_adj_m[16,15]=1; W_adj_m[16,17]=1; W_adj_m[16,27]=1
     // 17-湖北
-    A[17,12]=1; A[17,14]=1; A[17,16]=1
-    A[17,18]=1; A[17,22]=1; A[17,27]=1
+    W_adj_m[17,12]=1; W_adj_m[17,14]=1; W_adj_m[17,16]=1
+    W_adj_m[17,18]=1; W_adj_m[17,22]=1; W_adj_m[17,27]=1
     // 18-湖南
-    A[18,14]=1; A[18,17]=1; A[18,19]=1
-    A[18,20]=1; A[18,22]=1; A[18,24]=1
+    W_adj_m[18,14]=1; W_adj_m[18,17]=1; W_adj_m[18,19]=1
+    W_adj_m[18,20]=1; W_adj_m[18,22]=1; W_adj_m[18,24]=1
     // 19-广东
-    A[19,13]=1; A[19,14]=1; A[19,18]=1; A[19,20]=1
+    W_adj_m[19,13]=1; W_adj_m[19,14]=1; W_adj_m[19,18]=1; W_adj_m[19,20]=1
     // 20-广西
-    A[20,18]=1; A[20,19]=1; A[20,24]=1; A[20,25]=1
+    W_adj_m[20,18]=1; W_adj_m[20,19]=1; W_adj_m[20,24]=1; W_adj_m[20,25]=1
     // 21-海南（海岛，无陆地邻省）
-    // A[21,.] = 0（保持默认）
+    // W_adj_m[21,.] = 0（保持默认）
     // 22-重庆
-    A[22,17]=1; A[22,18]=1; A[22,23]=1
-    A[22,24]=1; A[22,27]=1
+    W_adj_m[22,17]=1; W_adj_m[22,18]=1; W_adj_m[22,23]=1
+    W_adj_m[22,24]=1; W_adj_m[22,27]=1
     // 23-四川
-    A[23,22]=1; A[23,24]=1; A[23,25]=1
-    A[23,26]=1; A[23,27]=1; A[23,28]=1; A[23,29]=1
+    W_adj_m[23,22]=1; W_adj_m[23,24]=1; W_adj_m[23,25]=1
+    W_adj_m[23,26]=1; W_adj_m[23,27]=1; W_adj_m[23,28]=1; W_adj_m[23,29]=1
     // 24-贵州
-    A[24,18]=1; A[24,20]=1; A[24,22]=1
-    A[24,23]=1; A[24,25]=1
+    W_adj_m[24,18]=1; W_adj_m[24,20]=1; W_adj_m[24,22]=1
+    W_adj_m[24,23]=1; W_adj_m[24,25]=1
     // 25-云南
-    A[25,20]=1; A[25,23]=1; A[25,24]=1; A[25,26]=1
+    W_adj_m[25,20]=1; W_adj_m[25,23]=1; W_adj_m[25,24]=1; W_adj_m[25,26]=1
     // 26-西藏
-    A[26,23]=1; A[26,25]=1; A[26,29]=1; A[26,31]=1
+    W_adj_m[26,23]=1; W_adj_m[26,25]=1; W_adj_m[26,29]=1; W_adj_m[26,31]=1
     // 27-陕西
-    A[27,4]=1; A[27,5]=1; A[27,16]=1; A[27,17]=1
-    A[27,22]=1; A[27,23]=1; A[27,28]=1; A[27,30]=1
+    W_adj_m[27,4]=1; W_adj_m[27,5]=1; W_adj_m[27,16]=1; W_adj_m[27,17]=1
+    W_adj_m[27,22]=1; W_adj_m[27,23]=1; W_adj_m[27,28]=1; W_adj_m[27,30]=1
     // 28-甘肃
-    A[28,5]=1; A[28,23]=1; A[28,27]=1
-    A[28,29]=1; A[28,30]=1; A[28,31]=1
+    W_adj_m[28,5]=1; W_adj_m[28,23]=1; W_adj_m[28,27]=1
+    W_adj_m[28,29]=1; W_adj_m[28,30]=1; W_adj_m[28,31]=1
     // 29-青海
-    A[29,23]=1; A[29,26]=1; A[29,28]=1
-    A[29,30]=1; A[29,31]=1
+    W_adj_m[29,23]=1; W_adj_m[29,26]=1; W_adj_m[29,28]=1
+    W_adj_m[29,30]=1; W_adj_m[29,31]=1
     // 30-宁夏
-    A[30,5]=1; A[30,27]=1; A[30,28]=1; A[30,29]=1
+    W_adj_m[30,5]=1; W_adj_m[30,27]=1; W_adj_m[30,28]=1; W_adj_m[30,29]=1
     // 31-新疆
-    A[31,26]=1; A[31,28]=1; A[31,29]=1
+    W_adj_m[31,26]=1; W_adj_m[31,28]=1; W_adj_m[31,29]=1
     
     // 验证对称性
-    sym_check = max(abs(A - A'))
+    sym_check = max(abs(W_adj_m - W_adj_m'))
     printf("对称性检验（应为0）: %f\n", sym_check)
     
     // 海南行和
-    printf("海南（行21）邻居数（应为0）: %f\n", sum(A[21,.]))
+    printf("海南（行21）邻居数（应为0）: %f\n", sum(W_adj_m[21,.]))
     
     // 行标准化（海南行和为0，保持为0）
     for (i=1; i<=n; i++) {
-        rs = sum(A[i,.])
-        if (rs > 0) A[i,.] = A[i,.] / rs
+        rs = sum(W_adj_m[i,.])
+        if (rs > 0) W_adj_m[i,.] = W_adj_m[i,.] / rs
     }
     
     printf("地理邻接矩阵行和均值（海南除外应为1）: %f\n", ///
-        mean(select(rowsum(A), rowsum(A):>0)))
+        mean(select(rowsum(W_adj_m), rowsum(W_adj_m):>0)))
     printf("总邻接对数（应为138=69×2）: %f\n", ///
-        sum(A:>0))
+        sum(W_adj_m:>0))
         
-    st_matrix("W_adj_raw", A)
+    st_matrix("W_adj_raw", W_adj_m)
 end
 
-spmatrix frommatrix W_adj_raw, id(province_id) replace ///
-    name(W_adj) normalized(row)
+capture noisily spmatrix spfrommata W_adj = W_adj_m, replace
+if _rc != 0 {
+    capture noisily spfrommata W_adj W_adj_m, replace
+}
+if _rc != 0 {
+    capture noisily spmatrix userdefined W_adj = W_adj_raw, replace
+}
+if _rc != 0 {
+    capture noisily spmatrix frommatrix W_adj_raw, id(province_id) name(W_adj) replace
+}
+
+capture noisily spmatrix summarize W_adj
+if _rc != 0 {
+    di as err "W_adj 创建失败：当前 Stata 不支持可用的矩阵导入语法"
+    exit 198
+}
 
 /*-----------------------------------------------------------
   第五步：Moran's I 空间自相关检验
