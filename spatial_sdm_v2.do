@@ -116,16 +116,21 @@ mata:
 end
 
 * 将矩阵与province_id绑定，转为spmatrix格式
-* 优先使用 spfrommata；若不可用，再回退 frommatrix
-capture noisily spmatrix spfrommata W_econ = W_econ_m, id(province_id) normalize(none) replace
+* 兼容不同版本：依次尝试 spmatrix spfrommata -> spfrommata -> userdefined -> frommatrix
+capture noisily spmatrix spfrommata W_econ = W_econ_m, replace
 if _rc != 0 {
-    di as txt "spfrommata 不可用，回退到 frommatrix ..."
+    capture noisily spfrommata W_econ W_econ_m, replace
+}
+if _rc != 0 {
+    capture noisily spmatrix userdefined W_econ = W_econ_raw, replace
+}
+if _rc != 0 {
     capture noisily spmatrix frommatrix W_econ_raw, id(province_id) name(W_econ) replace
 }
 
 capture noisily spmatrix summarize W_econ
 if _rc != 0 {
-    di as err "W_econ 创建失败：请检查 Stata 版本的 spmatrix 子命令支持"
+    di as err "W_econ 创建失败：当前 Stata 不支持可用的矩阵导入语法"
     exit 198
 }
 
@@ -246,15 +251,20 @@ mata:
     st_matrix("W_adj_raw", W_adj_m)
 end
 
-capture noisily spmatrix spfrommata W_adj = W_adj_m, id(province_id) normalize(none) replace
+capture noisily spmatrix spfrommata W_adj = W_adj_m, replace
 if _rc != 0 {
-    di as txt "spfrommata 不可用，回退到 frommatrix ..."
+    capture noisily spfrommata W_adj W_adj_m, replace
+}
+if _rc != 0 {
+    capture noisily spmatrix userdefined W_adj = W_adj_raw, replace
+}
+if _rc != 0 {
     capture noisily spmatrix frommatrix W_adj_raw, id(province_id) name(W_adj) replace
 }
 
 capture noisily spmatrix summarize W_adj
 if _rc != 0 {
-    di as err "W_adj 创建失败：请检查 Stata 版本的 spmatrix 子命令支持"
+    di as err "W_adj 创建失败：当前 Stata 不支持可用的矩阵导入语法"
     exit 198
 }
 
