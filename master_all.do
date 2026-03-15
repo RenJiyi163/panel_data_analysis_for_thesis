@@ -169,7 +169,7 @@ di as txt "========================================"
 
 build_vars
 
-spset province_id
+spset province_id year
 
 * ---- 3.1 构建经济距离权重矩阵 ----
 
